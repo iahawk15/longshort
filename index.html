@@ -136,7 +136,7 @@ let S=load()||fresh();
 function fresh(){
   return {rate:RATE, numPlayers:6, holes:18, startHole:1, players:[],
           iterations:[], screen:"config", draft:{}, active:"A",
-          pickLow:null, pickTotal:null, askPar:false, pendingStartHole:null, ended:false};
+          pickLow:null, pickTotal:null, pendingStartHole:null, ended:false, settleNow:false};
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
 function load(){try{const r=localStorage.getItem(KEY);return r?JSON.parse(r):null;}catch(e){return null;}}
@@ -152,14 +152,15 @@ function replay(it){
   ts.forEach(t=>points[t]=0);
   let hole=it.startHole;
   for(const h of it.holes){
-    rows.push({hole,lowOnLine:lowPot,totalOnLine:totalPot,low:h.low,total:h.total});
+    rows.push({hole,lowOnLine:lowPot,totalOnLine:totalPot,low:h.low,total:h.total,par3:!!h.par3});
     if(h.low==="carry")lowPot+=1; else {points[h.low]+=lowPot;lowPot=1;}
     if(h.total==="carry")totalPot+=1; else {points[h.total]+=totalPot;totalPot=1;}
     hole+=1;
   }
   const last=it.holes[it.holes.length-1];
-  const complete=!!last && last.low!=="carry" && last.total!=="carry";
-  return {points,lowPot,totalPot,rows,complete,nextHole:it.startHole+it.holes.length};
+  const pointsOut=!!last && last.low!=="carry" && last.total!=="carry";
+  const resolvedPar=pointsOut && !!last.par3;
+  return {points,lowPot,totalPot,rows,pointsOut,resolvedPar,nextHole:it.startHole+it.holes.length};
 }
 function settlement(points){
   const ts=teams(), n=ts.length, total=ts.reduce((s,t)=>s+points[t],0);
@@ -308,7 +309,7 @@ function teamScreen(){
   go.addEventListener("click",()=>{
     const t={}; teams().forEach(x=>t[x]=[...S.draft[x]]);
     S.iterations.push({teams:t,holes:[],startHole});
-    S.pendingStartHole=null; S.pickLow=null; S.pickTotal=null; S.askPar=false;
+    S.pendingStartHole=null; S.pickLow=null; S.pickTotal=null; S.settleNow=false;
     S.screen="play"; save(); render();
   });
   c.appendChild(go);
@@ -328,10 +329,13 @@ function playScreen(){
   const st=replay(it);
   const fH=finalHole();
   const dayOver=st.nextHole>fH;
+  const awaitingPar=st.pointsOut && !st.resolvedPar && !dayOver && !S.ended && !S.settleNow;
+  const settling=st.pointsOut && !st.resolvedPar && !dayOver && !S.ended && S.settleNow;
+  const inRecord=!S.ended && !dayOver && !awaitingPar && !settling;
   const frag=document.createDocumentFragment();
 
   const lastPlayed=st.rows.length?st.rows[st.rows.length-1].hole:it.startHole;
-  const shownHole=(S.ended||st.complete||dayOver)?lastPlayed:st.nextHole;
+  const shownHole=inRecord?st.nextHole:lastPlayed;
   const bar=$(`<div class="bar"></div>`);
   const top=$(`<div class="bar-top">
     <span class="hole-badge">HOLE ${shownHole}</span>
@@ -345,7 +349,7 @@ function playScreen(){
     end.addEventListener("click",endRound); grp.appendChild(end);
   }
   top.appendChild(grp); bar.appendChild(top);
-  if(!st.complete&&!dayOver&&!S.ended){
+  if(inRecord){
     const pots=$(`<div class="pots"></div>`);
     pots.appendChild(potTile("Low",st.lowPot));
     pots.appendChild(potTile("Total",st.totalPot));
@@ -365,8 +369,9 @@ function playScreen(){
   sb.appendChild(tw); frag.appendChild(sb);
 
   if(S.ended) frag.appendChild(endOfDayPanel(it,st,fH,true));
-  else if(st.complete) frag.appendChild(completePanel(it,st,dayOver));
   else if(dayOver) frag.appendChild(endOfDayPanel(it,st,fH,false));
+  else if(awaitingPar) frag.appendChild(parPanel(it,st));
+  else if(settling) frag.appendChild(settlePanel(it,st));
   else frag.appendChild(hilite(it,st,fH));
 
   if(st.rows.length){
@@ -377,6 +382,9 @@ function playScreen(){
       row.appendChild(tagCell("Low",r.low,r.lowOnLine));
       row.appendChild(tagCell("Total",r.total,r.totalOnLine));
       log.appendChild(row);
+      if(r.par3){
+        log.appendChild($(`<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--pin);padding:2px 0 8px;border-bottom:1px solid var(--line)">▸ points out · par 3 · teams kept</div>`));
+      }
     });
     lg.appendChild(log); frag.appendChild(lg);
   }
@@ -437,31 +445,36 @@ function pickGroup(label,key,mult){
   return g;
 }
 
-function completePanel(it,st,dayOver){
-  const c=$(`<div class="card"><h2>${dayOver?"Round over · final settlement":"Leg "+S.iterations.length+" complete"}</h2></div>`);
-  c.appendChild(settleBlock(settlement(st.points)));
+function parPanel(it,st){
+  const h=st.rows[st.rows.length-1].hole;
+  const c=$(`<div class="card"><h2>Points are out · hole ${h}</h2></div>`);
+  c.appendChild($(`<div class="banner">All points went out. Is the <b>next hole a par 3</b>? On a par 3 you keep the same teams and carry on — nobody settles yet.</div>`));
+  const rowP=$(`<div class="btn-row"></div>`);
+  const keep=$(`<button class="btn pin">Par 3 — keep teams</button>`);
+  keep.addEventListener("click",()=>{
+    const c2=cur(); c2.holes[c2.holes.length-1].par3=true; S.settleNow=false; save(); render();
+  });
+  const nu=$(`<button class="btn primary">Not a par 3</button>`);
+  nu.addEventListener("click",()=>{S.settleNow=true;save();render();});
+  rowP.appendChild(keep); rowP.appendChild(nu);
+  c.appendChild(rowP);
   const undo=$(`<button class="btn ghost" style="margin-top:10px">Undo last hole</button>`);
   undo.addEventListener("click",undoHole);
-  if(dayOver){
-    c.appendChild($(`<div class="note">That was hole ${finalHole()} — the round is done. Settle up, then start a new round when you're ready.</div>`));
-    const nr=$(`<button class="btn primary" style="margin-top:12px">New round</button>`);
-    nr.addEventListener("click",newRound);
-    c.appendChild(nr); c.appendChild(undo); return c;
-  }
-  if(S.askPar){
-    c.appendChild($(`<div class="banner">Is the <b>next hole a par 3</b>? On a par 3 you keep the same teams.</div>`));
-    const rowP=$(`<div class="btn-row"></div>`);
-    const keep=$(`<button class="btn pin">Par 3 — keep teams</button>`);
-    keep.addEventListener("click",()=>nextIteration(true));
-    const nu=$(`<button class="btn primary">New teams</button>`);
-    nu.addEventListener("click",()=>nextIteration(false));
-    rowP.appendChild(keep); rowP.appendChild(nu);
-    c.appendChild(rowP); c.appendChild(undo);
-  } else {
-    const cont=$(`<button class="btn primary" style="margin-top:14px">Settle &amp; continue →</button>`);
-    cont.addEventListener("click",()=>{S.askPar=true;save();render();});
-    c.appendChild(cont); c.appendChild(undo);
-  }
+  c.appendChild(undo);
+  return c;
+}
+
+function settlePanel(it,st){
+  const c=$(`<div class="card"><h2>Leg ${S.iterations.length} complete — settle up</h2></div>`);
+  c.appendChild(settleBlock(settlement(st.points)));
+  const go=$(`<button class="btn primary" style="margin-top:14px">Assign new teams →</button>`);
+  go.addEventListener("click",()=>{
+    S.settleNow=false; S.draft=emptyDraft(); S.active="A"; S.pendingStartHole=st.nextHole; S.screen="teams"; save(); render();
+  });
+  c.appendChild(go);
+  const back=$(`<button class="btn ghost" style="margin-top:10px">Back — it's a par 3</button>`);
+  back.addEventListener("click",()=>{S.settleNow=false;save();render();});
+  c.appendChild(back);
   return c;
 }
 
@@ -503,28 +516,17 @@ function settleBlock(s){
   return box;
 }
 
-function nextIteration(par3){
-  const it=cur(), st=replay(it), nh=st.nextHole;
-  if(par3){
-    const t={}; teams().forEach(x=>t[x]=[...it.teams[x]]);
-    S.iterations.push({teams:t,holes:[],startHole:nh});
-    S.pickLow=null; S.pickTotal=null; S.askPar=false; S.screen="play";
-  } else {
-    S.draft=emptyDraft(); S.active="A"; S.pendingStartHole=nh; S.askPar=false; S.screen="teams";
-  }
-  save(); render();
-}
 function endRound(){
   if(!confirm("End the round now? Any points still carrying will be forgotten."))return;
-  S.ended=true; S.pickLow=null; S.pickTotal=null; S.askPar=false; save(); render();
+  S.ended=true; S.pickLow=null; S.pickTotal=null; S.settleNow=false; save(); render();
 }
 function undoHole(){
   const it=cur(); if(!it||!it.holes.length)return;
-  it.holes.pop(); S.pickLow=null; S.pickTotal=null; S.askPar=false; save(); render();
+  it.holes.pop(); S.pickLow=null; S.pickTotal=null; S.settleNow=false; save(); render();
 }
 
 function editScreen(){
-  const rateLocked=S.iterations.some(it=>replay(it).complete);
+  const rateLocked=S.iterations.length>1;
   const c=$(`<div class="card"><h2>Edit game</h2></div>`);
 
   c.appendChild($(`<label class="fld">Round length</label>`));
@@ -559,7 +561,7 @@ function editScreen(){
 }
 
 function legHistory(){
-  const list=S.iterations.slice(0,-1).filter(it=>replay(it).complete);
+  const list=S.iterations.slice(0,-1).filter(it=>it.holes.length);
   if(!list.length)return $(`<div></div>`);
   const d=$(`<details class="roundlog"><summary>Earlier legs (${list.length})</summary></details>`);
   list.forEach((it,i)=>{
