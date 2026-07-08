@@ -67,6 +67,7 @@
   .opt.sel.C{background:var(--c);border-color:var(--c);color:#fff}
   .opt.sel.D{background:var(--d);border-color:var(--d);color:#fff}
   .opt.sel.carry{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+  .opt:disabled{opacity:.32;cursor:not-allowed}
   .btn{display:block;width:100%;border:none;border-radius:13px;padding:16px;font-size:17px;font-weight:800;cursor:pointer;font-family:var(--sans);min-height:56px;transition:transform .04s ease,opacity .15s}
   .btn:active{transform:scale(.985)}
   .btn.primary{background:var(--ink);color:var(--paper)}
@@ -141,7 +142,10 @@ function fresh(){
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
 function load(){try{const r=localStorage.getItem(KEY);return r?JSON.parse(r):null;}catch(e){return null;}}
 
-const teams=()=>LETTERS.slice(0,S.numPlayers/2);
+const teams=()=>LETTERS.slice(0,Math.ceil(S.numPlayers/2));
+const loneTeam=()=> (S.numPlayers%2===1) ? LETTERS[Math.ceil(S.numPlayers/2)-1] : null;
+const teamSize=(t)=> t===loneTeam() ? 1 : 2;
+const eligible=(it)=>{ const lt=loneTeam(); return teams().filter(t=> !(lt && t===lt && it && it.loneOut)); };
 const emptyDraft=()=>Object.fromEntries(teams().map(t=>[t,[]]));
 const cur=()=>S.iterations[S.iterations.length-1];
 const finalHole=()=>S.startHole+S.holes-1;
@@ -162,8 +166,8 @@ function replay(it){
   const resolvedPar=pointsOut && !!last.par3;
   return {points,lowPot,totalPot,rows,pointsOut,resolvedPar,nextHole:it.startHole+it.holes.length};
 }
-function settlement(points){
-  const ts=teams(), n=ts.length, total=ts.reduce((s,t)=>s+points[t],0);
+function settlement(points,tlist){
+  const ts=tlist||teams(), n=ts.length, total=ts.reduce((s,t)=>s+points[t],0);
   const nets=ts.map(t=>({t,net:+(S.rate*(n*points[t]-total)).toFixed(2)}));
   const debt=nets.filter(x=>x.net<-0.001).map(x=>({t:x.t,v:-x.net})).sort((a,b)=>b.v-a.v);
   const cred=nets.filter(x=>x.net>0.001).map(x=>({t:x.t,v:x.net})).sort((a,b)=>b.v-a.v);
@@ -203,7 +207,7 @@ function configScreen(){
   const c=$(`<div class="card"><h2>Set up the game</h2></div>`);
   c.appendChild($(`<label class="fld">Players</label>`));
   const segP=$(`<div class="seg"></div>`);
-  [4,6,8].forEach(v=>{
+  [4,5,6,7,8].forEach(v=>{
     const b=$(`<button class="${S.numPlayers===v?"on":""}">${v}</button>`);
     b.addEventListener("click",()=>{S.numPlayers=v;save();render();});
     segP.appendChild(b);
@@ -225,7 +229,11 @@ function configScreen(){
     segR.appendChild(b);
   });
   c.appendChild(segR);
-  c.appendChild($(`<p class="hint">${S.numPlayers/2} teams of two — ${teams().join(", ")}. ${S.holes} holes at ${money(S.rate)} per point.</p>`));
+  const lt=loneTeam();
+  const struct = lt
+    ? `${teams().length} teams — ${teams().filter(t=>t!==lt).join(", ")} are pairs, ${lt} is a solo player`
+    : `${teams().length} teams of two — ${teams().join(", ")}`;
+  c.appendChild($(`<p class="hint">${struct}. ${S.holes} holes at ${money(S.rate)} per point.</p>`));
   const go=$(`<button class="btn primary" style="margin-top:8px">Continue →</button>`);
   go.addEventListener("click",()=>{
     const arr=[]; for(let i=0;i<S.numPlayers;i++) arr.push(S.players[i]||"");
@@ -288,12 +296,13 @@ function teamScreen(){
   c.appendChild(pool);
   const box=$(`<div class="assign"></div>`);
   teams().forEach(t=>{
+    const solo=(t===loneTeam());
     const row=$(`<div class="ateam ${S.active===t?"active":""}"></div>`);
     const chip=$(`<div class="chip ${t}" style="background:var(--${t.toLowerCase()})">${t}</div>`);
     chip.addEventListener("click",()=>{S.active=t;render();});
     row.appendChild(chip);
     const slots=$(`<div class="slots"></div>`);
-    for(let k=0;k<2;k++){
+    for(let k=0;k<teamSize(t);k++){
       const name=S.draft[t][k];
       if(name){
         const s=$(`<div class="slot filled">${esc(name)}</div>`);
@@ -301,10 +310,12 @@ function teamScreen(){
         slots.appendChild(s);
       } else slots.appendChild($(`<div class="slot">empty</div>`));
     }
-    row.appendChild(slots); box.appendChild(row);
+    row.appendChild(slots);
+    if(solo) row.appendChild($(`<span style="margin-left:auto;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft)">solo</span>`));
+    box.appendChild(row);
   });
   c.appendChild(box);
-  const ready=teams().every(t=>S.draft[t].length===2);
+  const ready=teams().every(t=>S.draft[t].length===teamSize(t));
   const go=$(`<button class="btn primary" ${ready?"":"disabled"}>Start hole ${startHole}</button>`);
   go.addEventListener("click",()=>{
     const t={}; teams().forEach(x=>t[x]=[...S.draft[x]]);
@@ -317,9 +328,9 @@ function teamScreen(){
 }
 function assignToActive(name){
   const ts=teams(); let t=S.active;
-  if(S.draft[t].length>=2) t=ts.find(x=>S.draft[x].length<2)||t;
-  if(S.draft[t].length<2) S.draft[t].push(name);
-  S.active = S.draft[t].length>=2 ? (ts.find(x=>S.draft[x].length<2)||t) : t;
+  if(S.draft[t].length>=teamSize(t)) t=ts.find(x=>S.draft[x].length<teamSize(x))||t;
+  if(S.draft[t].length<teamSize(t)) S.draft[t].push(name);
+  S.active = S.draft[t].length>=teamSize(t) ? (ts.find(x=>S.draft[x].length<teamSize(x))||t) : t;
   render();
 }
 
@@ -329,9 +340,10 @@ function playScreen(){
   const st=replay(it);
   const fH=finalHole();
   const dayOver=st.nextHole>fH;
+  const needLone=!!loneTeam() && it.loneOut===undefined && !dayOver && !S.ended;
   const awaitingPar=st.pointsOut && !st.resolvedPar && !dayOver && !S.ended && !S.settleNow;
   const settling=st.pointsOut && !st.resolvedPar && !dayOver && !S.ended && S.settleNow;
-  const inRecord=!S.ended && !dayOver && !awaitingPar && !settling;
+  const inRecord=!S.ended && !dayOver && !needLone && !awaitingPar && !settling;
   const frag=document.createDocumentFragment();
 
   const lastPlayed=st.rows.length?st.rows[st.rows.length-1].hole:it.startHole;
@@ -359,17 +371,24 @@ function playScreen(){
 
   const sb=$(`<div class="card"><h2>Standings — this leg</h2></div>`);
   const tw=$(`<div class="teams"></div>`);
+  const elig=eligible(it);
   teams().forEach(t=>{
-    const [p1,p2]=it.teams[t];
-    tw.appendChild($(`<div class="team-row ${t}">
+    const members=it.teams[t];
+    const out=!elig.includes(t);
+    const who = members.length>1
+      ? `${esc(members[0])}<br><small>${esc(members[1])}</small>`
+      : `${esc(members[0])}<br><small>solo${out?" · sitting out":""}</small>`;
+    const row=$(`<div class="team-row ${t}" style="${out?"opacity:.4":""}">
       <div class="chip">${t}</div>
-      <div class="who">${esc(p1)}<br><small>${esc(p2)}</small></div>
-      <div class="pts">${st.points[t]}<span> pt${st.points[t]===1?"":"s"}</span></div></div>`));
+      <div class="who">${who}</div>
+      <div class="pts">${st.points[t]}<span> pt${st.points[t]===1?"":"s"}</span></div></div>`);
+    tw.appendChild(row);
   });
   sb.appendChild(tw); frag.appendChild(sb);
 
   if(S.ended) frag.appendChild(endOfDayPanel(it,st,fH,true));
   else if(dayOver) frag.appendChild(endOfDayPanel(it,st,fH,false));
+  else if(needLone) frag.appendChild(lonePanel(it));
   else if(awaitingPar) frag.appendChild(parPanel(it,st));
   else if(settling) frag.appendChild(settlePanel(it,st));
   else frag.appendChild(hilite(it,st,fH));
@@ -408,9 +427,17 @@ function tagCell(kind,winner,onLine){
 }
 
 function hilite(it,st,fH){
+  const elig=eligible(it);
   const c=$(`<div class="card"><h2>Record hole ${st.nextHole}${st.nextHole===fH?" · final hole":""}</h2></div>`);
-  c.appendChild(pickGroup("Low","pickLow",st.lowPot));
-  c.appendChild(pickGroup("Total","pickTotal",st.totalPot));
+  const lt=loneTeam();
+  if(lt && it.holes.length===0){
+    const state = it.loneOut ? "sitting out" : "playing";
+    const chg=$(`<div class="hint" style="margin:-4px 0 12px">Team ${lt} (solo) is <b>${state}</b> this leg · <a href="#" style="color:var(--pin)">change</a></div>`);
+    chg.querySelector("a").addEventListener("click",(e)=>{e.preventDefault();cur().loneOut=undefined;save();render();});
+    c.appendChild(chg);
+  }
+  c.appendChild(pickGroup("Low","pickLow",st.lowPot,elig));
+  c.appendChild(pickGroup("Total","pickTotal",st.totalPot,elig));
   const ready=S.pickLow&&S.pickTotal;
   const rec=$(`<button class="btn primary" ${ready?"":"disabled"} style="margin-top:4px">Record hole ${st.nextHole}</button>`);
   rec.addEventListener("click",()=>{
@@ -422,27 +449,49 @@ function hilite(it,st,fH){
     const u=$(`<button class="btn ghost" style="margin-top:10px">Undo last hole</button>`);
     u.addEventListener("click",undoHole); c.appendChild(u);
   }
-  const anyPts=teams().reduce((s,t)=>s+st.points[t],0)>0;
+  const anyPts=elig.reduce((s,t)=>s+st.points[t],0)>0;
   if(anyPts){
     const prev=$(`<details class="roundlog"><summary>If settled right now</summary></details>`);
-    prev.appendChild(settleBlock(settlement(st.points))); c.appendChild(prev);
+    prev.appendChild(settleBlock(settlement(st.points,elig)));
+    if(soloReminder(it)) prev.appendChild(soloReminder(it));
+    c.appendChild(prev);
   }
   return c;
 }
-function pickGroup(label,key,mult){
+function soloReminder(it){
+  const lt=loneTeam();
+  if(!lt || it.loneOut) return null;
+  return $(`<div class="note" style="margin-top:10px">Team ${lt} plays solo — <b>double</b> their amounts at payout.</div>`);
+}
+function pickGroup(label,key,mult,elig){
   const g=$(`<div class="pick-grp"></div>`);
   g.appendChild($(`<div class="pick-lbl">${label}<b>×${mult}</b>
     <span style="margin-left:auto;color:var(--ink-soft);font-weight:600;text-transform:none;letter-spacing:0">${money(mult*S.rate)}</span></div>`));
   const row=$(`<div class="pick-row" style="grid-template-columns:repeat(${teams().length},1fr)"></div>`);
   teams().forEach(t=>{
-    const b=$(`<button class="opt ${t} ${S[key]===t?"sel":""}">${t}</button>`);
-    b.addEventListener("click",()=>{S[key]=S[key]===t?null:t;render();});
+    const off=elig && !elig.includes(t);
+    const b=$(`<button class="opt ${t} ${S[key]===t?"sel":""}" ${off?"disabled":""}>${t}</button>`);
+    if(!off) b.addEventListener("click",()=>{S[key]=S[key]===t?null:t;render();});
     row.appendChild(b);
   });
   const carry=$(`<button class="opt carry ${S[key]==="carry"?"sel":""}">Tie — carry over</button>`);
   carry.addEventListener("click",()=>{S[key]=S[key]==="carry"?null:"carry";render();});
   row.appendChild(carry); g.appendChild(row);
   return g;
+}
+
+function lonePanel(it){
+  const lt=loneTeam(); const name=it.teams[lt][0];
+  const c=$(`<div class="card"><h2>Solo player · Team ${lt}</h2></div>`);
+  c.appendChild($(`<div class="banner"><b>${esc(name)}</b> is playing alone this leg, with double exposure — every point won or lost counts twice for them. In or out for this leg?</div>`));
+  const row=$(`<div class="btn-row"></div>`);
+  const inB=$(`<button class="btn pin">In — play</button>`);
+  inB.addEventListener("click",()=>{cur().loneOut=false;save();render();});
+  const outB=$(`<button class="btn primary">Out — sit out</button>`);
+  outB.addEventListener("click",()=>{cur().loneOut=true;save();render();});
+  row.appendChild(inB); row.appendChild(outB);
+  c.appendChild(row);
+  return c;
 }
 
 function parPanel(it,st){
@@ -466,7 +515,8 @@ function parPanel(it,st){
 
 function settlePanel(it,st){
   const c=$(`<div class="card"><h2>Leg ${S.iterations.length} complete — settle up</h2></div>`);
-  c.appendChild(settleBlock(settlement(st.points)));
+  c.appendChild(settleBlock(settlement(st.points,eligible(it))));
+  if(soloReminder(it)) c.appendChild(soloReminder(it));
   const go=$(`<button class="btn primary" style="margin-top:14px">Settle &amp; continue →</button>`);
   go.addEventListener("click",()=>{
     S.settleNow=false; S.draft=emptyDraft(); S.active="A"; S.pendingStartHole=st.nextHole; S.screen="teams"; save(); render();
@@ -487,7 +537,8 @@ function endOfDayPanel(it,st,fH,earlyEnd){
   }
   c.appendChild($(`<div style="height:10px"></div>`));
   c.appendChild($(`<div class="pick-lbl" style="margin-bottom:8px">Settle the points that went out</div>`));
-  c.appendChild(settleBlock(settlement(st.points)));
+  c.appendChild(settleBlock(settlement(st.points,eligible(it))));
+  if(soloReminder(it)) c.appendChild(soloReminder(it));
   const nr=$(`<button class="btn primary" style="margin-top:14px">New round</button>`);
   nr.addEventListener("click",newRound);
   c.appendChild(nr);
@@ -565,12 +616,14 @@ function legHistory(){
   if(!list.length)return $(`<div></div>`);
   const d=$(`<details class="roundlog"><summary>Earlier legs (${list.length})</summary></details>`);
   list.forEach((it,i)=>{
-    const st=replay(it), s=settlement(st.points);
+    const st=replay(it), s=settlement(st.points,eligible(it)), lt=loneTeam();
     const card=$(`<div class="card" style="margin-top:10px"></div>`);
     card.appendChild($(`<h2>Leg ${i+1} · holes ${it.startHole}–${st.rows[st.rows.length-1].hole}</h2>`));
     teams().forEach(t=>{
-      card.appendChild($(`<div style="font-size:14px;padding:2px 0">
-        <span class="pill ${t}">${t}</span>&nbsp; ${esc(it.teams[t].join(" + "))}
+      const out=lt&&t===lt&&it.loneOut;
+      const solo=lt&&t===lt;
+      card.appendChild($(`<div style="font-size:14px;padding:2px 0;${out?"opacity:.5":""}">
+        <span class="pill ${t}">${t}</span>&nbsp; ${esc(it.teams[t].join(" + "))}${solo?(out?" (sat out)":" (solo)"):""}
         &nbsp;—&nbsp;<b class="num">${st.points[t]}</b> pts</div>`));
     });
     card.appendChild($(`<div style="height:8px"></div>`));
