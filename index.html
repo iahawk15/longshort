@@ -69,7 +69,8 @@
   .opt.sel.carry{background:var(--ink);border-color:var(--ink);color:var(--paper)}
   .opt:disabled{opacity:.32;cursor:not-allowed}
   .rank-list{display:grid;gap:8px;margin:12px 0}
-  .rank-row{display:grid;grid-template-columns:66px 30px 1fr;gap:10px;align-items:center;border:1px solid var(--line);border-radius:11px;padding:8px 10px}
+  .rank-row{display:grid;grid-template-columns:66px 30px 1fr;gap:10px;align-items:center;border:1px solid var(--line);border-radius:11px;padding:8px 10px;cursor:pointer}
+  .rank-row.active{border-color:var(--ink);box-shadow:0 0 0 2px rgba(21,32,27,.10)}
   .rank-row .rk{font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-soft);font-weight:700;line-height:1.15}
   .rank-row .chip{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:#fff;font-weight:800;font-family:var(--mono)}
   .rank-row.A{background:var(--a-soft)} .rank-row.B{background:var(--b-soft)} .rank-row.C{background:var(--c-soft)} .rank-row.D{background:var(--d-soft)}
@@ -141,7 +142,7 @@ let S=load()||fresh();
 
 function fresh(){
   return {rate:RATE, numPlayers:6, holes:18, startHole:1, players:[],
-          iterations:[], screen:"config", ranks:[],
+          iterations:[], screen:"config", ranks:[], activeRank:0,
           pickLow:null, pickTotal:null, pendingStartHole:null, ended:false, settleNow:false};
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
@@ -274,7 +275,7 @@ function setupScreen(){
   btn.addEventListener("click",()=>{
     const named=S.players.map(x=>x.trim());
     if(named.filter(Boolean).length<S.numPlayers){alert("Enter all "+S.numPlayers+" names first.");return;}
-    S.players=named; S.ranks=emptyRanks(); S.pendingStartHole=null; S.screen="teams"; save(); render();
+    S.players=named; S.ranks=emptyRanks(); S.activeRank=0; S.pendingStartHole=null; S.screen="teams"; save(); render();
   });
   c.appendChild(btn);
   const wrap=$(`<div></div>`); wrap.appendChild(c);
@@ -289,10 +290,13 @@ function setupScreen(){
 /* ---------- Team assignment (ranked: longest → shortest) ---------- */
 function teamScreen(){
   const startHole=S.pendingStartHole||S.startHole;
-  if(!Array.isArray(S.ranks)||S.ranks.length!==S.numPlayers) S.ranks=emptyRanks();
+  if(!Array.isArray(S.ranks)||S.ranks.length!==S.numPlayers){ S.ranks=emptyRanks(); S.activeRank=0; }
+  if(S.activeRank==null || S.activeRank<0 || S.activeRank>=S.numPlayers || S.ranks[S.activeRank]!=null){
+    S.activeRank=S.ranks.indexOf(null);
+  }
   const lt=loneTeam();
   const c=$(`<div class="card"><h2>Rank the drives · hole ${startHole}</h2></div>`);
-  c.appendChild($(`<p class="hint">Tap players in order of drive — longest first. Each drops into the next slot down. Tap a placed name to send it back. Teams set themselves: longest + shortest = A, working inward.</p>`));
+  c.appendChild($(`<p class="hint">Tap players in order — longest first — and each drops into the highlighted slot. Or tap any slot to aim there first, then tap a player. Tap a placed name to send it back. Teams set themselves: longest + shortest = A, working inward.</p>`));
 
   const placed=S.ranks.filter(Boolean);
   const pool=$(`<div class="pool"></div>`);
@@ -307,18 +311,12 @@ function teamScreen(){
 
   const list=$(`<div class="rank-list"></div>`);
   for(let i=0;i<S.numPlayers;i++){
-    const t=teamForRank(i), solo=(lt&&t===lt);
-    const row=$(`<div class="rank-row ${t}"></div>`);
+    const t=teamForRank(i), solo=(lt&&t===lt), name=S.ranks[i];
+    const row=$(`<div class="rank-row ${t} ${S.activeRank===i?"active":""}"></div>`);
     row.appendChild($(`<span class="rk">${rankLabel(i)}</span>`));
     row.appendChild($(`<div class="chip" style="background:var(--${t.toLowerCase()})">${t}</div>`));
-    const name=S.ranks[i];
-    if(name){
-      const s=$(`<div class="slot filled" style="text-align:left">${esc(name)}${solo?" · solo":""}</div>`);
-      s.addEventListener("click",()=>{S.ranks[i]=null;save();render();});
-      row.appendChild(s);
-    } else {
-      row.appendChild($(`<div class="slot" style="text-align:left">${solo?"solo — ":""}empty</div>`));
-    }
+    row.appendChild($(`<div class="slot ${name?"filled":""}" style="text-align:left">${name?esc(name)+(solo?" · solo":""):(solo?"solo — empty":"empty")}</div>`));
+    row.addEventListener("click",()=>rowTap(i));
     list.appendChild(row);
   }
   c.appendChild(list);
@@ -330,14 +328,20 @@ function teamScreen(){
     S.ranks.forEach((name,i)=>{ t[teamForRank(i)].push(name); });
     S.iterations.push({teams:t,holes:[],startHole});
     S.pendingStartHole=null; S.pickLow=null; S.pickTotal=null; S.settleNow=false;
-    S.ranks=[]; S.screen="play"; save(); render();
+    S.ranks=[]; S.activeRank=0; S.screen="play"; save(); render();
   });
   c.appendChild(go);
   return c;
 }
+function rowTap(i){
+  if(S.ranks[i]) S.ranks[i]=null;   // tapping a placed name sends it back to the pool
+  S.activeRank=i;                    // and aims the next placement here
+  save(); render();
+}
 function placeRank(name){
-  const i=S.ranks.indexOf(null);
-  if(i>=0){S.ranks[i]=name; save(); render();}
+  let i=S.activeRank;
+  if(i==null||i<0||i>=S.numPlayers||S.ranks[i]!=null) i=S.ranks.indexOf(null);
+  if(i>=0){ S.ranks[i]=name; S.activeRank=S.ranks.indexOf(null); save(); render(); }
 }
 
 /* ---------- Play ---------- */
@@ -525,7 +529,7 @@ function settlePanel(it,st){
   if(soloReminder(it)) c.appendChild(soloReminder(it));
   const go=$(`<button class="btn primary" style="margin-top:14px">Settle &amp; continue →</button>`);
   go.addEventListener("click",()=>{
-    S.settleNow=false; S.ranks=emptyRanks(); S.pendingStartHole=st.nextHole; S.screen="teams"; save(); render();
+    S.settleNow=false; S.ranks=emptyRanks(); S.activeRank=0; S.pendingStartHole=st.nextHole; S.screen="teams"; save(); render();
   });
   c.appendChild(go);
   const back=$(`<button class="btn ghost" style="margin-top:10px">Back — it's a par 3</button>`);
