@@ -142,7 +142,7 @@ let S=load()||fresh();
 
 function fresh(){
   return {rate:RATE, numPlayers:6, holes:18, startHole:1, players:[],
-          iterations:[], screen:"config", ranks:[], activeRank:0,
+          iterations:[], screen:"config", ranks:[], activeRank:0, reassign:false,
           pickLow:null, pickTotal:null, pendingStartHole:null, ended:false, settleNow:false};
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
@@ -275,7 +275,7 @@ function setupScreen(){
   btn.addEventListener("click",()=>{
     const named=S.players.map(x=>x.trim());
     if(named.filter(Boolean).length<S.numPlayers){alert("Enter all "+S.numPlayers+" names first.");return;}
-    S.players=named; S.ranks=emptyRanks(); S.activeRank=0; S.pendingStartHole=null; S.screen="teams"; save(); render();
+    S.players=named; S.ranks=emptyRanks(); S.activeRank=0; S.reassign=false; S.pendingStartHole=null; S.screen="teams"; save(); render();
   });
   c.appendChild(btn);
   const wrap=$(`<div></div>`); wrap.appendChild(c);
@@ -295,8 +295,9 @@ function teamScreen(){
     S.activeRank=S.ranks.indexOf(null);
   }
   const lt=loneTeam();
-  const c=$(`<div class="card"><h2>Rank the drives · hole ${startHole}</h2></div>`);
-  c.appendChild($(`<p class="hint">Tap players in order — longest first — and each drops into the highlighted slot. Or tap any slot to aim there first, then tap a player. Tap a placed name to send it back. Teams set themselves: longest + shortest = A, working inward.</p>`));
+  const reassign=!!S.reassign;
+  const c=$(`<div class="card"><h2>${reassign?"Re-rank teams":"Rank the drives · hole "+startHole}</h2></div>`);
+  c.appendChild($(`<p class="hint">Tap players in order — longest first — and each drops into the highlighted slot. Or tap any slot to aim there first, then tap a player. Tap a placed name to send it back. Teams set themselves: longest + shortest = A, working inward.${reassign?" The leg's points so far stay as they are.":""}</p>`));
 
   const placed=S.ranks.filter(Boolean);
   const pool=$(`<div class="pool"></div>`);
@@ -322,15 +323,21 @@ function teamScreen(){
   c.appendChild(list);
 
   const ready=S.ranks.every(Boolean);
-  const go=$(`<button class="btn primary" ${ready?"":"disabled"}>Start hole ${startHole}</button>`);
+  const go=$(`<button class="btn primary" ${ready?"":"disabled"}>${reassign?"Save teams":"Start hole "+startHole}</button>`);
   go.addEventListener("click",()=>{
     const t=Object.fromEntries(teams().map(x=>[x,[]]));
     S.ranks.forEach((name,i)=>{ t[teamForRank(i)].push(name); });
-    S.iterations.push({teams:t,holes:[],startHole});
+    if(S.reassign){ cur().teams=t; S.reassign=false; }
+    else { S.iterations.push({teams:t,holes:[],startHole}); }
     S.pendingStartHole=null; S.pickLow=null; S.pickTotal=null; S.settleNow=false;
     S.ranks=[]; S.activeRank=0; S.screen="play"; save(); render();
   });
   c.appendChild(go);
+  if(reassign){
+    const cancel=$(`<button class="btn ghost" style="margin-top:10px">Cancel</button>`);
+    cancel.addEventListener("click",()=>{S.reassign=false;S.ranks=[];S.activeRank=0;S.screen="play";save();render();});
+    c.appendChild(cancel);
+  }
   return c;
 }
 function rowTap(i){
@@ -342,6 +349,15 @@ function placeRank(name){
   let i=S.activeRank;
   if(i==null||i<0||i>=S.numPlayers||S.ranks[i]!=null) i=S.ranks.indexOf(null);
   if(i>=0){ S.ranks[i]=name; S.activeRank=S.ranks.indexOf(null); save(); render(); }
+}
+function ranksFromTeams(it){
+  const r=new Array(S.numPlayers).fill(null), idx={};
+  for(let i=0;i<S.numPlayers;i++){
+    const L=teamForRank(i), k=idx[L]||0, arr=it.teams[L]||[];
+    r[i]= (k<arr.length) ? arr[k] : null;
+    idx[L]=k+1;
+  }
+  return r;
 }
 
 /* ---------- Play ---------- */
@@ -529,7 +545,7 @@ function settlePanel(it,st){
   if(soloReminder(it)) c.appendChild(soloReminder(it));
   const go=$(`<button class="btn primary" style="margin-top:14px">Settle &amp; continue →</button>`);
   go.addEventListener("click",()=>{
-    S.settleNow=false; S.ranks=emptyRanks(); S.activeRank=0; S.pendingStartHole=st.nextHole; S.screen="teams"; save(); render();
+    S.settleNow=false; S.ranks=emptyRanks(); S.activeRank=0; S.reassign=false; S.pendingStartHole=st.nextHole; S.screen="teams"; save(); render();
   });
   c.appendChild(go);
   const back=$(`<button class="btn ghost" style="margin-top:10px">Back — it's a par 3</button>`);
@@ -615,6 +631,15 @@ function editScreen(){
   const done=$(`<button class="btn primary" style="margin-top:12px">Done</button>`);
   done.addEventListener("click",()=>{S.screen="play";save();render();});
   c.appendChild(done);
+  if(cur()){
+    const rt=$(`<button class="btn ghost" style="margin-top:10px">Re-rank teams →</button>`);
+    rt.addEventListener("click",()=>{
+      const it=cur();
+      S.ranks=ranksFromTeams(it); S.activeRank=-1; S.reassign=true;
+      S.pendingStartHole=it.startHole; S.screen="teams"; save(); render();
+    });
+    c.appendChild(rt);
+  }
   const nr=$(`<button class="btn ghost" style="margin-top:10px">New round</button>`);
   nr.addEventListener("click",newRound);
   c.appendChild(nr);
