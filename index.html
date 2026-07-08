@@ -467,7 +467,7 @@ function parPanel(it,st){
 function settlePanel(it,st){
   const c=$(`<div class="card"><h2>Leg ${S.iterations.length} complete — settle up</h2></div>`);
   c.appendChild(settleBlock(settlement(st.points)));
-  const go=$(`<button class="btn primary" style="margin-top:14px">Assign new teams →</button>`);
+  const go=$(`<button class="btn primary" style="margin-top:14px">Settle &amp; continue →</button>`);
   go.addEventListener("click",()=>{
     S.settleNow=false; S.draft=emptyDraft(); S.active="A"; S.pendingStartHole=st.nextHole; S.screen="teams"; save(); render();
   });
