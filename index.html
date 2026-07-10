@@ -37,6 +37,8 @@
   .hole-badge{font-family:var(--mono);font-weight:700;font-size:15px;background:var(--ink);color:var(--paper);padding:4px 10px;border-radius:999px}
   .iter-tag{font-size:12px;color:var(--ink-soft);letter-spacing:.06em;text-transform:uppercase}
   .bar-menu{margin-left:auto}
+  .bar-actions{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;margin-bottom:8px}
+  .btn.kill{background:#FDECE6;border:1.5px solid var(--pin);color:var(--pin);font-weight:800}
   .pots{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .pot{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;box-shadow:var(--shadow);position:relative;overflow:hidden}
   .pot .lbl{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft)}
@@ -66,7 +68,7 @@
   .opt.sel.B{background:var(--b);border-color:var(--b);color:#fff}
   .opt.sel.C{background:var(--c);border-color:var(--c);color:#fff}
   .opt.sel.D{background:var(--d);border-color:var(--d);color:#fff}
-  .opt.sel.carry{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+  .opt.sel.carry{background:#5C5F5B;border-color:#5C5F5B;color:var(--paper)}
   .opt:disabled{opacity:.32;cursor:not-allowed}
   .rank-list{display:grid;gap:8px;margin:12px 0}
   .rank-row{display:grid;grid-template-columns:66px 30px 1fr;gap:10px;align-items:center;border:1px solid var(--line);border-radius:11px;padding:8px 10px;cursor:pointer}
@@ -399,15 +401,19 @@ function playScreen(){
   const top=$(`<div class="bar-top">
     <span class="hole-badge">HOLE ${shownHole}</span>
     <span class="iter-tag">Leg ${S.iterations.length} · ${S.numPlayers}p · ${S.holes}h · ${rateLabel(S.rate)}</span></div>`);
-  const grp=$(`<div class="bar-menu" style="display:flex;gap:8px"></div>`);
+  bar.appendChild(top);
+  const acts=$(`<div class="bar-actions"></div>`);
   const edit=$(`<button class="btn ghost mini">Edit</button>`);
   edit.addEventListener("click",()=>{S.screen="edit";save();render();});
-  grp.appendChild(edit);
+  acts.appendChild(edit);
+  const win=$(`<button class="btn ghost mini">Winnings</button>`);
+  win.addEventListener("click",()=>{S.screen="summary";save();render();});
+  acts.appendChild(win);
   if(!S.ended){
-    const end=$(`<button class="btn ghost mini">End round</button>`);
-    end.addEventListener("click",endRound); grp.appendChild(end);
+    const end=$(`<button class="btn kill mini">End round</button>`);
+    end.addEventListener("click",endRound); acts.appendChild(end);
   }
-  top.appendChild(grp); bar.appendChild(top);
+  bar.appendChild(acts);
   if(inRecord){
     const pots=$(`<div class="pots"></div>`);
     pots.appendChild(potTile("Low",st.lowPot));
@@ -442,20 +448,24 @@ function playScreen(){
 
   if(st.rows.length){
     const lg=$(`<div class="card"><h2>Holes this leg</h2></div>`);
-    const log=$(`<div class="log"></div>`);
-    st.rows.forEach(r=>{
-      const row=$(`<div class="log-row"><div class="h">${r.hole}</div></div>`);
-      row.appendChild(tagCell("Low",r.low,r.lowOnLine));
-      row.appendChild(tagCell("Total",r.total,r.totalOnLine));
-      log.appendChild(row);
-      if(r.par3){
-        log.appendChild($(`<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--pin);padding:2px 0 8px;border-bottom:1px solid var(--line)">▸ points out · par 3 · teams kept</div>`));
-      }
-    });
-    lg.appendChild(log); frag.appendChild(lg);
+    lg.appendChild(holeLogEl(st.rows)); frag.appendChild(lg);
   }
   frag.appendChild(legHistory());
   return frag;
+}
+
+function holeLogEl(rows){
+  const log=$(`<div class="log"></div>`);
+  rows.forEach(r=>{
+    const row=$(`<div class="log-row"><div class="h">${r.hole}</div></div>`);
+    row.appendChild(tagCell("Low",r.low,r.lowOnLine));
+    row.appendChild(tagCell("Total",r.total,r.totalOnLine));
+    log.appendChild(row);
+    if(r.par3){
+      log.appendChild($(`<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--pin);padding:2px 0 8px;border-bottom:1px solid var(--line)">▸ points out · par 3 · teams kept</div>`));
+    }
+  });
+  return log;
 }
 
 function potTile(label,mult){
@@ -670,7 +680,10 @@ function editScreen(){
 function summaryScreen(){
   const tot=dayPlayerTotals();
   const rows=S.players.map(p=>[p,tot[p]||0]).sort((a,b)=>b[1]-a[1]);
-  const c=$(`<div class="card"><h2>Day summary — money won &amp; lost</h2></div>`);
+  const it=cur();
+  const roundOver = S.ended || (it ? replay(it).nextHole>finalHole() : false);
+  const c=$(`<div class="card"><h2>Winnings — money won &amp; lost</h2></div>`);
+  c.appendChild($(`<p class="hint" style="margin:-6px 0 10px">${roundOver?"Final tally for the day.":"Running totals — round still in progress."}</p>`));
   const list=$(`<div></div>`);
   rows.forEach(([p,net])=>{
     const cls=net>0.005?"up":(net<-0.005?"down":"");
@@ -678,12 +691,17 @@ function summaryScreen(){
   });
   c.appendChild(list);
   c.appendChild($(`<div class="note" style="margin-top:12px">Everyone nets to zero. Solo legs are already counted at double for the solo player.</div>`));
-  const nr=$(`<button class="btn primary" style="margin-top:14px">New round</button>`);
-  nr.addEventListener("click",newRound);
-  c.appendChild(nr);
-  const back=$(`<button class="btn ghost" style="margin-top:10px">Back to settlement</button>`);
-  back.addEventListener("click",()=>{S.screen="play";save();render();});
-  c.appendChild(back);
+  if(roundOver){
+    const nr=$(`<button class="btn primary" style="margin-top:14px">New round</button>`);
+    nr.addEventListener("click",newRound); c.appendChild(nr);
+    const back=$(`<button class="btn ghost" style="margin-top:10px">Back to settlement</button>`);
+    back.addEventListener("click",()=>{S.screen="play";save();render();}); c.appendChild(back);
+  } else {
+    const back=$(`<button class="btn primary" style="margin-top:14px">Back to the round</button>`);
+    back.addEventListener("click",()=>{S.screen="play";save();render();}); c.appendChild(back);
+    const nr=$(`<button class="btn ghost" style="margin-top:10px">New round</button>`);
+    nr.addEventListener("click",newRound); c.appendChild(nr);
+  }
   return c;
 }
 
@@ -695,6 +713,8 @@ function legHistory(){
     const st=replay(it), s=settlement(st.points,eligible(it)), lt=loneTeam();
     const card=$(`<div class="card" style="margin-top:10px"></div>`);
     card.appendChild($(`<h2>Leg ${i+1} · holes ${it.startHole}–${st.rows[st.rows.length-1].hole}</h2>`));
+    card.appendChild(holeLogEl(st.rows));
+    card.appendChild($(`<div style="height:12px"></div>`));
     teams().forEach(t=>{
       const out=lt&&t===lt&&it.loneOut;
       const solo=lt&&t===lt;
