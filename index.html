@@ -105,6 +105,7 @@
   .settle-line{display:flex;align-items:center;gap:8px;font-size:16px;padding:8px 0;border-bottom:1px dashed var(--line)}
   .settle-line:last-child{border-bottom:none}
   .settle-line .amt{margin-left:auto;font-family:var(--mono);font-weight:800}
+  .amt.up{color:var(--ok)} .amt.down{color:var(--pin)}
   .square{text-align:center;font-weight:800;color:var(--ok);padding:6px 0}
   .pill{font-family:var(--mono);font-weight:800;color:#fff;border-radius:6px;padding:1px 7px;font-size:14px}
   .pill.A{background:var(--a)} .pill.B{background:var(--b)} .pill.C{background:var(--c)} .pill.D{background:var(--d)}
@@ -190,6 +191,25 @@ function settlement(points,tlist){
   return {nets,pays};
 }
 
+/* Per-player net for one leg. Each player carries their team's per-pairing net;
+   the solo player (when in) carries DOUBLE, since they cover both pairings. */
+function legPlayerNets(it){
+  const out={}; const st=replay(it); const elig=eligible(it);
+  const n=elig.length, total=elig.reduce((s,t)=>s+st.points[t],0), lt=loneTeam();
+  elig.forEach(t=>{
+    const teamNet=S.rate*(n*st.points[t]-total);
+    const solo=(t===lt);
+    (it.teams[t]||[]).forEach(p=>{ out[p]=(out[p]||0)+(solo?2*teamNet:teamNet); });
+  });
+  return out;
+}
+function dayPlayerTotals(){
+  const tot={}; S.players.forEach(p=>tot[p]=0);
+  S.iterations.forEach(it=>{ const nets=legPlayerNets(it); for(const p in nets) tot[p]=(tot[p]||0)+nets[p]; });
+  return tot;
+}
+const signedMoney=(n)=> (n>0.005?"+$":n<-0.005?"−$":"$")+Math.abs(n).toFixed(2);
+
 /* ================= RENDER ================= */
 function render(){
   const app=document.getElementById("app"); app.innerHTML="";
@@ -198,6 +218,7 @@ function render(){
   else if(S.screen==="setup") app.appendChild(setupScreen());
   else if(S.screen==="teams") app.appendChild(teamScreen());
   else if(S.screen==="edit") app.appendChild(editScreen());
+  else if(S.screen==="summary") app.appendChild(summaryScreen());
   else app.appendChild(playScreen());
   app.appendChild(foot());
 }
@@ -565,9 +586,9 @@ function endOfDayPanel(it,st,fH,earlyEnd){
   c.appendChild($(`<div class="pick-lbl" style="margin-bottom:8px">Settle the points that went out</div>`));
   c.appendChild(settleBlock(settlement(st.points,eligible(it))));
   if(soloReminder(it)) c.appendChild(soloReminder(it));
-  const nr=$(`<button class="btn primary" style="margin-top:14px">New round</button>`);
-  nr.addEventListener("click",newRound);
-  c.appendChild(nr);
+  const go=$(`<button class="btn primary" style="margin-top:14px">Settle &amp; continue →</button>`);
+  go.addEventListener("click",()=>{S.screen="summary";save();render();});
+  c.appendChild(go);
   if(earlyEnd){
     const rz=$(`<button class="btn ghost" style="margin-top:10px">Resume playing</button>`);
     rz.addEventListener("click",()=>{S.ended=false;save();render();});
@@ -643,6 +664,26 @@ function editScreen(){
   const nr=$(`<button class="btn ghost" style="margin-top:10px">New round</button>`);
   nr.addEventListener("click",newRound);
   c.appendChild(nr);
+  return c;
+}
+
+function summaryScreen(){
+  const tot=dayPlayerTotals();
+  const rows=S.players.map(p=>[p,tot[p]||0]).sort((a,b)=>b[1]-a[1]);
+  const c=$(`<div class="card"><h2>Day summary — money won &amp; lost</h2></div>`);
+  const list=$(`<div></div>`);
+  rows.forEach(([p,net])=>{
+    const cls=net>0.005?"up":(net<-0.005?"down":"");
+    list.appendChild($(`<div class="settle-line"><span>${esc(p)}</span><span class="amt ${cls}">${signedMoney(net)}</span></div>`));
+  });
+  c.appendChild(list);
+  c.appendChild($(`<div class="note" style="margin-top:12px">Everyone nets to zero. Solo legs are already counted at double for the solo player.</div>`));
+  const nr=$(`<button class="btn primary" style="margin-top:14px">New round</button>`);
+  nr.addEventListener("click",newRound);
+  c.appendChild(nr);
+  const back=$(`<button class="btn ghost" style="margin-top:10px">Back to settlement</button>`);
+  back.addEventListener("click",()=>{S.screen="play";save();render();});
+  c.appendChild(back);
   return c;
 }
 
