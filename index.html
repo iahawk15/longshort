@@ -96,6 +96,10 @@
   input.txt:focus,.opt:focus-visible,.btn:focus-visible,.seg button:focus-visible{outline:3px solid #9ad3bd;outline-offset:1px}
   .two{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;margin-bottom:10px}
   .two input.txt{margin:0}
+  .field{position:relative}
+  .field input.txt{padding-right:42px}
+  .clear-x{position:absolute;top:0;bottom:0;right:6px;margin:auto;height:30px;width:30px;border:none;background:transparent;color:var(--ink-soft);font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:8px;padding:0}
+  .clear-x:active{background:var(--paper)}
   .idx{font-family:var(--mono);font-weight:800;color:var(--ink-soft);width:22px;text-align:right}
   .seg{display:grid;gap:8px;grid-auto-flow:column;grid-auto-columns:1fr;margin-bottom:18px}
   .seg button{border:1.5px solid var(--line-strong);background:var(--card);border-radius:11px;padding:16px 0;font-weight:800;font-size:19px;font-family:var(--mono);color:var(--ink);cursor:pointer;min-height:56px}
@@ -287,14 +291,22 @@ function setupScreen(){
   const c=$(`<div class="card"></div>`);
   const head=$(`<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px"></div>`);
   head.appendChild($(`<h2 style="margin:0">Players</h2>`));
-  const chg=$(`<button class="btn ghost mini" style="margin-left:auto">${S.numPlayers}p · ${S.holes}h</button>`);
+  const clr=$(`<button class="btn ghost mini" style="margin-left:auto">Clear all</button>`);
+  clr.addEventListener("click",()=>{ S.players=S.players.map(()=>""); save(); render(); });
+  head.appendChild(clr);
+  const chg=$(`<button class="btn ghost mini">${S.numPlayers}p · ${S.holes}h</button>`);
   chg.addEventListener("click",()=>{S.screen="config";render();});
   head.appendChild(chg); c.appendChild(head);
   S.players.forEach((p,i)=>{
     const row=$(`<div class="two"><span class="idx">${i+1}</span></div>`);
+    const field=$(`<div class="field"></div>`);
     const inp=$(`<input class="txt" type="text" autocomplete="off" placeholder="Player ${i+1}" value="${esc(p)}">`);
-    inp.addEventListener("input",()=>{S.players[i]=inp.value;save();});
-    row.appendChild(inp); c.appendChild(row);
+    const x=$(`<button class="clear-x" aria-label="Clear name" tabindex="-1">×</button>`);
+    x.style.display = p ? "flex" : "none";
+    inp.addEventListener("input",()=>{ S.players[i]=inp.value; save(); x.style.display = inp.value ? "flex" : "none"; });
+    x.addEventListener("click",()=>{ S.players[i]=""; inp.value=""; save(); x.style.display="none"; inp.focus(); });
+    field.appendChild(inp); field.appendChild(x);
+    row.appendChild(field); c.appendChild(row);
   });
   const sw=$(`<div style="margin-top:6px"></div>`);
   sw.appendChild($(`<label class="fld">Starting hole</label>`));
@@ -302,12 +314,13 @@ function setupScreen(){
   sh.addEventListener("input",()=>{const v=parseInt(sh.value,10);S.startHole=isNaN(v)?1:v;save();});
   sw.appendChild(sh); c.appendChild(sw);
   const btn=$(`<button class="btn primary" style="margin-top:6px">Set teams →</button>`);
+  const err=$(`<p class="hint" style="color:var(--pin);display:none;margin-top:8px">Enter all ${S.numPlayers} names first.</p>`);
   btn.addEventListener("click",()=>{
     const named=S.players.map(x=>x.trim());
-    if(named.filter(Boolean).length<S.numPlayers){alert("Enter all "+S.numPlayers+" names first.");return;}
+    if(named.filter(Boolean).length<S.numPlayers){ err.style.display="block"; return; }
     S.players=named; S.ranks=emptyRanks(); S.activeRank=0; S.reassign=false; S.pendingStartHole=null; S.screen="teams"; save(); render();
   });
-  c.appendChild(btn);
+  c.appendChild(btn); c.appendChild(err);
   const wrap=$(`<div></div>`); wrap.appendChild(c);
   if(S.iterations.length){
     const r=$(`<button class="btn ghost" style="margin-top:12px">Resume saved round</button>`);
@@ -755,8 +768,8 @@ function legHistory(){
 
 function newRound(){
   confirmModal("New round?","This clears the current game and starts fresh. Player names, hole count and stake carry over.","New round",()=>{
-    const np=S.numPlayers, h=S.holes, r=S.rate;
-    S=fresh(); S.numPlayers=np; S.holes=h; S.rate=r;
+    const np=S.numPlayers, h=S.holes, r=S.rate, pl=S.players.slice();
+    S=fresh(); S.numPlayers=np; S.holes=h; S.rate=r; S.players=pl;
     save(); render();
   }, false);
 }
