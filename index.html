@@ -39,6 +39,13 @@
   .bar-menu{margin-left:auto}
   .bar-actions{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;margin-bottom:8px}
   .btn.kill{background:#FDECE6;border:1.5px solid var(--pin);color:var(--pin);font-weight:800}
+  .btn.danger{background:var(--pin);color:#fff}
+  .modal-overlay{position:fixed;inset:0;background:rgba(21,32,27,.5);display:flex;align-items:center;justify-content:center;padding:24px;z-index:100;-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+  .modal{background:var(--card);border-radius:18px;max-width:360px;width:100%;padding:22px 20px;box-shadow:0 24px 64px rgba(21,32,27,.35);animation:pop .12s ease-out}
+  @keyframes pop{from{transform:scale(.96);opacity:.6}to{transform:scale(1);opacity:1}}
+  .modal-title{font-size:20px;font-weight:800;letter-spacing:-.01em;margin-bottom:8px}
+  .modal-msg{font-size:15px;line-height:1.45;color:var(--ink-soft);margin-bottom:18px}
+  .modal-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .pots{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .pot{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;box-shadow:var(--shadow);position:relative;overflow:hidden}
   .pot .lbl{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft)}
@@ -624,9 +631,26 @@ function settleBlock(s){
   return box;
 }
 
+function confirmModal(title,message,okLabel,onOk,danger){
+  const overlay=$(`<div class="modal-overlay"></div>`);
+  const box=$(`<div class="modal"></div>`);
+  box.appendChild($(`<div class="modal-title">${esc(title)}</div>`));
+  box.appendChild($(`<div class="modal-msg">${esc(message)}</div>`));
+  const row=$(`<div class="modal-row"></div>`);
+  const cancel=$(`<button class="btn ghost">Cancel</button>`);
+  cancel.addEventListener("click",()=>overlay.remove());
+  const ok=$(`<button class="btn ${danger?"danger":"primary"}">${esc(okLabel)}</button>`);
+  ok.addEventListener("click",()=>{overlay.remove();onOk();});
+  row.appendChild(cancel); row.appendChild(ok);
+  box.appendChild(row); overlay.appendChild(box);
+  overlay.addEventListener("click",(e)=>{ if(e.target===overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
 function endRound(){
-  if(!confirm("End the round now? Any points still carrying will be forgotten."))return;
-  S.ended=true; S.pickLow=null; S.pickTotal=null; S.settleNow=false; save(); render();
+  confirmModal("End round?","Any points still carrying will be forgotten.","End round",()=>{
+    S.ended=true; S.pickLow=null; S.pickTotal=null; S.settleNow=false; save(); render();
+  }, true);
 }
 function undoHole(){
   const it=cur(); if(!it||!it.holes.length)return;
@@ -730,10 +754,11 @@ function legHistory(){
 }
 
 function newRound(){
-  if(!confirm("Start a brand new round? This clears the current game."))return;
-  const np=S.numPlayers, h=S.holes, r=S.rate;
-  S=fresh(); S.numPlayers=np; S.holes=h; S.rate=r;
-  save(); render();
+  confirmModal("New round?","This clears the current game and starts fresh. Player names, hole count and stake carry over.","New round",()=>{
+    const np=S.numPlayers, h=S.holes, r=S.rate;
+    S=fresh(); S.numPlayers=np; S.holes=h; S.rate=r;
+    save(); render();
+  }, false);
 }
 
 render();
