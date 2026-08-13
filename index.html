@@ -153,6 +153,9 @@ const rateLabel=(r)=> r>=1 ? "$"+r.toFixed(r%1?2:0) : Math.round(r*100)+"¢";
 const esc=(s)=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 let S=load()||fresh();
+// Hole tracking is by position (1st, 2nd, ... hole played); display wraps to course size.
+// Normalize any saved game's leg starts to position ordinals (idempotent).
+(function(){ if(S&&Array.isArray(S.iterations)){ let o=1; S.iterations.forEach(it=>{ it.startHole=o; o+=(it.holes?it.holes.length:0); }); if(S.pendingStartHole!=null) S.pendingStartHole=o; } })();
 
 function fresh(){
   return {rate:RATE, numPlayers:6, holes:18, startHole:1, players:[],
@@ -171,7 +174,8 @@ const teamForRank=(i)=>LETTERS[Math.min(i,S.numPlayers-1-i)];
 const ord=(n)=>{const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);};
 function rankLabel(i){ if(i===0)return "Longest"; if(i===S.numPlayers-1)return "Shortest"; return ord(i+1); }
 const cur=()=>S.iterations[S.iterations.length-1];
-const finalHole=()=>S.startHole+S.holes-1;
+const finalOrdinal=()=>S.holes;
+const displayHole=(ord)=>((S.startHole-1+(ord-1))%S.holes)+1;
 
 /* ---- engine ---- */
 function replay(it){
@@ -288,6 +292,7 @@ function configScreen(){
 
 /* ---------- Names ---------- */
 function setupScreen(){
+  if(!(S.startHole>=1&&S.startHole<=S.holes)) S.startHole=1;
   const c=$(`<div class="card"></div>`);
   const head=$(`<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px"></div>`);
   head.appendChild($(`<h2 style="margin:0">Players</h2>`));
@@ -309,15 +314,21 @@ function setupScreen(){
     row.appendChild(field); c.appendChild(row);
   });
   const sw=$(`<div style="margin-top:6px"></div>`);
-  sw.appendChild($(`<label class="fld">Starting hole</label>`));
+  sw.appendChild($(`<label class="fld">Starting hole (1–${S.holes})</label>`));
   const sh=$(`<input class="txt num" inputmode="numeric" style="max-width:120px" value="${S.startHole}">`);
-  sh.addEventListener("input",()=>{const v=parseInt(sh.value,10);S.startHole=isNaN(v)?1:v;save();});
+  sh.addEventListener("input",()=>{
+    if(sh.value==="")return;
+    let v=parseInt(sh.value,10); if(isNaN(v))return;
+    v=Math.min(Math.max(1,v),S.holes); S.startHole=v; save();
+    if(String(v)!==sh.value) sh.value=String(v);
+  });
   sw.appendChild(sh); c.appendChild(sw);
   const btn=$(`<button class="btn primary" style="margin-top:6px">Set teams →</button>`);
   const err=$(`<p class="hint" style="color:var(--pin);display:none;margin-top:8px">Enter all ${S.numPlayers} names first.</p>`);
   btn.addEventListener("click",()=>{
     const named=S.players.map(x=>x.trim());
     if(named.filter(Boolean).length<S.numPlayers){ err.style.display="block"; return; }
+    S.startHole=Math.min(Math.max(1,parseInt(S.startHole,10)||1),S.holes);
     S.players=named; S.ranks=emptyRanks(); S.activeRank=0; S.reassign=false; S.pendingStartHole=null; S.screen="teams"; save(); render();
   });
   c.appendChild(btn); c.appendChild(err);
@@ -332,14 +343,14 @@ function setupScreen(){
 
 /* ---------- Team assignment (ranked: longest → shortest) ---------- */
 function teamScreen(){
-  const startHole=S.pendingStartHole||S.startHole;
+  const startOrdinal=S.pendingStartHole||1;
   if(!Array.isArray(S.ranks)||S.ranks.length!==S.numPlayers){ S.ranks=emptyRanks(); S.activeRank=0; }
   if(S.activeRank==null || S.activeRank<0 || S.activeRank>=S.numPlayers || S.ranks[S.activeRank]!=null){
     S.activeRank=S.ranks.indexOf(null);
   }
   const lt=loneTeam();
   const reassign=!!S.reassign;
-  const c=$(`<div class="card"><h2>${reassign?"Re-rank teams":"Rank the drives · hole "+startHole}</h2></div>`);
+  const c=$(`<div class="card"><h2>${reassign?"Re-rank teams":"Rank the drives · hole "+displayHole(startOrdinal)}</h2></div>`);
   c.appendChild($(`<p class="hint">Tap players in order — longest first — and each drops into the highlighted slot. Or tap any slot to aim there first, then tap a player. Tap a placed name to send it back. Teams set themselves: longest + shortest = A, working inward.${reassign?" The leg's points so far stay as they are.":""}</p>`));
 
   const placed=S.ranks.filter(Boolean);
@@ -366,12 +377,12 @@ function teamScreen(){
   c.appendChild(list);
 
   const ready=S.ranks.every(Boolean);
-  const go=$(`<button class="btn primary" ${ready?"":"disabled"}>${reassign?"Save teams":"Start hole "+startHole}</button>`);
+  const go=$(`<button class="btn primary" ${ready?"":"disabled"}>${reassign?"Save teams":"Start hole "+displayHole(startOrdinal)}</button>`);
   go.addEventListener("click",()=>{
     const t=Object.fromEntries(teams().map(x=>[x,[]]));
     S.ranks.forEach((name,i)=>{ t[teamForRank(i)].push(name); });
     if(S.reassign){ cur().teams=t; S.reassign=false; }
-    else { S.iterations.push({teams:t,holes:[],startHole}); }
+    else { S.iterations.push({teams:t,holes:[],startHole:startOrdinal}); }
     S.pendingStartHole=null; S.pickLow=null; S.pickTotal=null; S.settleNow=false;
     S.ranks=[]; S.activeRank=0; S.screen="play"; save(); render();
   });
@@ -407,7 +418,7 @@ function ranksFromTeams(it){
 function playScreen(){
   const it=cur(); if(!it){S.screen="setup";return setupScreen();}
   const st=replay(it);
-  const fH=finalHole();
+  const fH=finalOrdinal();
   const dayOver=st.nextHole>fH;
   const needLone=!!loneTeam() && it.loneOut===undefined && !dayOver && !S.ended;
   const awaitingPar=st.pointsOut && !st.resolvedPar && !dayOver && !S.ended && !S.settleNow;
@@ -419,7 +430,7 @@ function playScreen(){
   const shownHole=inRecord?st.nextHole:lastPlayed;
   const bar=$(`<div class="bar"></div>`);
   const top=$(`<div class="bar-top">
-    <span class="hole-badge">HOLE ${shownHole}</span>
+    <span class="hole-badge">HOLE ${displayHole(shownHole)}</span>
     <span class="iter-tag">Leg ${S.iterations.length} · ${S.numPlayers}p · ${S.holes}h · ${rateLabel(S.rate)}</span></div>`);
   bar.appendChild(top);
   const acts=$(`<div class="bar-actions"></div>`);
@@ -477,7 +488,7 @@ function playScreen(){
 function holeLogEl(rows){
   const log=$(`<div class="log"></div>`);
   rows.forEach(r=>{
-    const row=$(`<div class="log-row"><div class="h">${r.hole}</div></div>`);
+    const row=$(`<div class="log-row"><div class="h">${displayHole(r.hole)}</div></div>`);
     row.appendChild(tagCell("Low",r.low,r.lowOnLine));
     row.appendChild(tagCell("Total",r.total,r.totalOnLine));
     log.appendChild(row);
@@ -505,7 +516,7 @@ function tagCell(kind,winner,onLine){
 
 function hilite(it,st,fH){
   const elig=eligible(it);
-  const c=$(`<div class="card"><h2>Record hole ${st.nextHole}${st.nextHole===fH?" · final hole":""}</h2></div>`);
+  const c=$(`<div class="card"><h2>Record hole ${displayHole(st.nextHole)}${st.nextHole===fH?" · final hole":""}</h2></div>`);
   const lt=loneTeam();
   if(lt && it.holes.length===0){
     const state = it.loneOut ? "sitting out" : "playing";
@@ -516,7 +527,7 @@ function hilite(it,st,fH){
   c.appendChild(pickGroup("Low","pickLow",st.lowPot,elig));
   c.appendChild(pickGroup("Total","pickTotal",st.totalPot,elig));
   const ready=S.pickLow&&S.pickTotal;
-  const rec=$(`<button class="btn primary" ${ready?"":"disabled"} style="margin-top:4px">Record hole ${st.nextHole}</button>`);
+  const rec=$(`<button class="btn primary" ${ready?"":"disabled"} style="margin-top:4px">Record hole ${displayHole(st.nextHole)}</button>`);
   rec.addEventListener("click",()=>{
     it.holes.push({low:S.pickLow,total:S.pickTotal});
     S.pickLow=null; S.pickTotal=null; save(); render();
@@ -573,7 +584,7 @@ function lonePanel(it){
 
 function parPanel(it,st){
   const h=st.rows[st.rows.length-1].hole;
-  const c=$(`<div class="card"><h2>Points are out · hole ${h}</h2></div>`);
+  const c=$(`<div class="card"><h2>Points are out · hole ${displayHole(h)}</h2></div>`);
   c.appendChild($(`<div class="banner">All points went out. Is the <b>next hole a par 3</b>? On a par 3 you keep the same teams and carry on — nobody settles yet.</div>`));
   const rowP=$(`<div class="btn-row"></div>`);
   const keep=$(`<button class="btn pin">Par 3 — keep teams</button>`);
@@ -606,7 +617,7 @@ function settlePanel(it,st){
 }
 
 function endOfDayPanel(it,st,fH,earlyEnd){
-  const c=$(`<div class="card"><h2>${earlyEnd?"Round ended early":"End of day · hole "+fH}</h2></div>`);
+  const c=$(`<div class="card"><h2>${earlyEnd?"Round ended early":"End of day · hole "+displayHole(fH)}</h2></div>`);
   const fLow=Math.max(0,st.lowPot-1), fTot=Math.max(0,st.totalPot-1);
   if(fLow||fTot){
     const parts=[]; if(fLow)parts.push(`Low ×${fLow}`); if(fTot)parts.push(`Total ×${fTot}`);
@@ -718,7 +729,7 @@ function summaryScreen(){
   const tot=dayPlayerTotals();
   const rows=S.players.map(p=>[p,tot[p]||0]).sort((a,b)=>b[1]-a[1]);
   const it=cur();
-  const roundOver = S.ended || (it ? replay(it).nextHole>finalHole() : false);
+  const roundOver = S.ended || (it ? replay(it).nextHole>finalOrdinal() : false);
   const c=$(`<div class="card"><h2>Winnings — money won &amp; lost</h2></div>`);
   c.appendChild($(`<p class="hint" style="margin:-6px 0 10px">${roundOver?"Final tally for the day.":"Running totals — round still in progress."}</p>`));
   const list=$(`<div></div>`);
@@ -749,7 +760,7 @@ function legHistory(){
   list.forEach((it,i)=>{
     const st=replay(it), s=settlement(st.points,eligible(it)), lt=loneTeam();
     const card=$(`<div class="card" style="margin-top:10px"></div>`);
-    card.appendChild($(`<h2>Leg ${i+1} · holes ${it.startHole}–${st.rows[st.rows.length-1].hole}</h2>`));
+    card.appendChild($(`<h2>Leg ${i+1} · holes ${displayHole(it.startHole)}–${displayHole(st.rows[st.rows.length-1].hole)}</h2>`));
     card.appendChild(holeLogEl(st.rows));
     card.appendChild($(`<div style="height:12px"></div>`));
     teams().forEach(t=>{
